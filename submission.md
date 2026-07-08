@@ -1,3 +1,17 @@
+AI usage section
+
+I used AI to clarify the workings of unfamiliar functions an example being while reviewing routes for the codebase map, I asked it to explain code I didn't have much experience with. Better understanding playlists.py made it easier to see how the different services connect.
+
+AI also generated the test file test_feed_listening_now_repro.py, which crucially let me reproduce the bug in Issue #2 and work through it.
+
+
+
+
+
+
+Codebase Map
+
+
 models.py is responsible for defining SQLAlchemy models for all database entries:
 - Association tables for user friendships, song tags, and playlist songs.
 - Classes User, Tag, Song, ListeningEvent, Rating, Playlist, and Notification.
