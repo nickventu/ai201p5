@@ -57,6 +57,21 @@ How you found the root cause — Traced from the failing test → `update_listen
 The root cause — Python's date.weekday() returns 6 for Sunday (Monday=0 ... Sunday=6). The increment branch was written as `elif days_since_last == 1 and today.weekday() != 6:` which means it only increments the streak on a consecutive day if that day isn't a Sunday. When a user's consecutive listen happens to land on a Sunday, this condition is False, so execution falls through to the `else` branch and the streak resets to 1 instead of incrementing to 2 — even though exactly one day passed, which per the docstring should always increment.
 
 Your fix and side-effect check:
-Removed the `and today.weekday() != 6` clause, leaving `elif days_since_last == 1:` so any consecutive-day listen increments the streak regardless of which weekday it falls on. 
-Re-ran `pytest tests/test_streaks.py -v` — all 5 tests passed, including test_streak_increments_on_sunday. 
-Also checked test_streak_does_not_double_count_same_day and test_streak_resets_after_skipped_day to confirm the untouched branches (same-day no-op, multi-day reset) still behave correctly.
+* Removed the `and today.weekday() != 6` clause, leaving `elif days_since_last == 1:` so any consecutive-day listen increments the streak regardless of which weekday it falls on. 
+* Re-ran `pytest tests/test_streaks.py -v` — all 5 tests passed, including test_streak_increments_on_sunday. 
+* Checked test_streak_does_not_double_count_same_day and test_streak_resets_after_skipped_day to confirm the untouched branches (same-day no-op, multi-day reset) still behave correctly.
+
+
+
+
+Issue #2 - Friends Listening Now shows people from yesterday
+
+How you reproduced it - Wrote tests/test_feed_listening_now_repro.py. Seeded a friendship (nova/darius) and a ListeningEvent for darius at 2024-06-10 23:00 UTC ("11pm last night"). Mocked services.feed_service's datetime.now() to return 2024-06-11 09:00 UTC ("9am the next morning") and called get_friends_listening_now(nova_id). Expected darius to be excluded (his last listen was the previous calendar day), but he still appeared in the feed. Ran `pytest tests/test_feed_listening_now_repro.py -v` — test_repro_stale_listen_from_last_night_still_shows_this_morning FAILED, confirming the bug; a control test with a same-day listen passed, confirming the feed isn't broadly broken.
+
+How you found the root cause - Traced from routes/feed.py's /listening-now route → get_friends_listening_now in feed_service.py. The function name and route both imply "right now" / "today," so I read the cutoff calculation line-by-line. RECENT_THRESHOLD = timedelta(hours=24) stood out immediately as just a duration, not an actual calendar boundary. This was confirmed by computing the exact cutoff math against the test's timestamps (10 hours between darius's listen and nova's check, well under 24h), which matched the failure exactly.
+
+The root cause - RECENT_THRESHOLD = timedelta(hours=24), used as cutoff = datetime.now(timezone.utc) - RECENT_THRESHOLD, implements a rolling 24-hour lookback window rather than a "since midnight today" calendar-day boundary. Any listen within the past 24 hours passes the `ListeningEvent.listened_at >= cutoff` filter, regardless of whether it happened yesterday or today. An 11pm listen is only ~10 hours old at 9am the next day, so it stays under the 24h threshold and keeps appearing until a full 24 hours have elapsed from the original listen which adds up with nova's report that stale friends "hang around until the same time the next day."
+
+Your fix and side-effect check:
+* Replaced `cutoff = datetime.now(timezone.utc) - RECENT_THRESHOLD` (a rolling 24h window) with `cutoff = datetime.combine(now.date(), datetime.min.time(), tzinfo=timezone.utc)` — midnight UTC of the current day, a real calendar-day boundary instead of a duration.
+* Re-ran tests/test_feed_listening_now_repro.py and both tests passed, including the one that previously reproduced the bug. re-ran the full test suite to check for regressions in get_activity_feed (same file) and confirmed it was untouched and unaffected.
